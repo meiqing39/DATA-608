@@ -78,11 +78,11 @@ ggplot(final, aes(x = Population, y = Total_Billions)) +
     aes(label = State), 
     vjust = -1, # Pushes text above  dot
     fontface = "bold", 
-    size = 3
+    size = 2.5
   ) +
   annotate(
-    "text", x = 29000000, y = 13, 
-    label = "The Baseline Trend:\nMore residents = bigger check", fontface = "bold", color = "black", size = 4
+    "text", x = 14000000, y = 13, 
+    label = "Baseline Trend:\nMore residents correlated with higher funding", fontface = "bold", color = "black", size = 4
   ) +
   scale_x_continuous(labels = label_number(scale_cut = cut_short_scale())) +
   scale_y_continuous(labels = dollar_format(suffix = "B")) +
