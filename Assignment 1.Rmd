@@ -1,0 +1,206 @@
+---
+title: "Story 1"
+author: "Mei Qi Ng"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Approach
+
+The objective of this analysis is to assess the fund allocations from the Infrastructure Investment and Jobs Act (IIJA) from March 2023 in combination with the information from the U.S. Census Population Estimates and 2020 Presidential Election Results. The analysis will address two primary questions
+
+- Is the allocation equitable based on the population of each State and Territory?
+
+- Does the allocation favor the political interests of the Biden administration?
+
+## Data source
+
+- IIJA Funding Data: Provided via bright space assignment file (IIJA FUNDING AS OF MARCH 2023.xlsx)
+- U.S. Census Population Estimates: Sourced from the U.S. Census Bureau's Population Estimates Program (NST-EST2023-ALLDATA) website - <https://www.census.gov/programs-surveys/popest/data.html>
+- 2020 Presidential Election Results: Sourced from MIT Election Data and Science Lab (MEDSL) website - <https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/42MVDX>
+
+## Load R package, clean and merge data sets
+
+```{r}
+library(tidyverse) 
+library(scales)
+
+#source all data
+statefund <-read.csv("https://raw.githubusercontent.com/meiqing39/DATA-608/refs/heads/main/IIJA%20FUNDING%20AS%20OF%20MARCH%202023.csv")
+
+
+census_pop <- read.csv("https://raw.githubusercontent.com/meiqing39/DATA-608/refs/heads/main/2023%20ANNUAL%20STATE%20POPULATION%20ESTIMATE.csv")
+
+election <- read.csv("https://raw.githubusercontent.com/meiqing39/DATA-608/refs/heads/main/1976-2024-president.csv")
+
+
+#  Data Wrangle
+pop <- census_pop |> 
+  select(State= NAME, Population = POPESTIMATE2020) |> 
+  filter(!State %in% c("United States", "Northeast Region", "Midwest Region", "South Region", "West Region")) |> mutate(State = toupper(State))
+
+
+statefund <-statefund |> 
+ rename(State = 'State..Teritory.or.Tribal.Nation', Total_Billions = 'Total..Billions.') 
+
+election_win <- election |> 
+  filter(year==2020) |> 
+  group_by(state) |> 
+  slice_max (order_by = candidatevotes, n = 1) |> 
+  ungroup() |> 
+  mutate(State = toupper(state),
+  Winner = ifelse(party_simplified == "DEMOCRAT", "Biden",
+           ifelse(party_simplified == "REPUBLICAN", "Trump", "Other"))) |> 
+  select(State,Winner)
+
+```
+
+```{r}
+#Merge all 3 dataset
+
+final<- statefund %>%
+  left_join(pop, by = "State") |> 
+  left_join(election_win, by = "State") |> 
+  filter(!is.na(Winner)) |> 
+  mutate(
+    Funding_Per_Capita = (Total_Billions * 1e9) / Population)
+```
+
+# Visualization
+
+```{r}
+# CHART 1: Total Funding vs Population
+ggplot(final, aes(x = Population, y = Total_Billions)) +
+  geom_point(alpha = 0.6, size = 3, color = "red") +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
+  geom_text(
+    data = filter(final, State %in% c("CALIFORNIA", "TEXAS", "NEW YORK", "FLORIDA", "WYOMING")),
+    aes(label = State), 
+    vjust = -1, # Pushes text above  dot
+    fontface = "bold", 
+    size = 3
+  ) +
+  annotate(
+    "text", x = 29000000, y = 13, 
+    label = "The Baseline Trend:\nMore residents = bigger check", fontface = "bold", color = "black", size = 4
+  ) +
+  scale_x_continuous(labels = label_number(scale_cut = cut_short_scale())) +
+  scale_y_continuous(labels = dollar_format(suffix = "B")) +
+  labs(
+    title = "Baseline: Total Funding Matches Population",
+    subtitle = "On an absolute basis, larger states get more money. But this hides the true story.",
+    x = "State Population", 
+    y = "Total Funding (Billions)"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    panel.grid.minor = element_blank()
+  )
+```
+
+## Question 1: Is the allocation equitable based on population
+
+```{r}
+# Create top 10 and bottom 10
+top_10 <- final |> 
+  slice_max(order_by = Funding_Per_Capita, n = 10) |> 
+  mutate(Group = "Top 10\n(Highest Per Capita)")
+
+bottom_10 <- final |> 
+  slice_min(order_by = Funding_Per_Capita, n = 10) |> 
+  mutate(Group = "Bottom 10\n(Lowest Per Capita)")
+
+# Bind together sort by funding amount
+q1<- bind_rows(top_10, bottom_10) |>
+  mutate(State = reorder(State, Funding_Per_Capita))
+
+# plot
+ggplot(q1, aes(x = Funding_Per_Capita, y = State, fill = Winner)) +
+  geom_col() +
+  geom_text(aes(label = dollar(Funding_Per_Capita, accuracy = 1)),  #add $ values to bars
+            hjust = -0.1, size = 3.5, fontface = "bold") +
+  facet_wrap(~Group, scales = "free_y") + 
+  scale_fill_manual(values = c("Biden" = "blue", "Trump" = "red")) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.25))) +
+  labs(
+    title = "IIJA Funding Per Capita: The Extremes",
+    subtitle = "Alaska receives over 10x more infrastructure funding per resident than Florida.",
+    x = NULL,
+    y = NULL,
+    fill = "2020 Presidential Candidate"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "bottom", # move legend to bottom
+    panel.spacing = unit(2, "lines"),
+    axis.text.x = element_blank(), # REMOVED X AXIS NUMBERS
+    axis.ticks.x = element_blank(), # REMOVED X AXIS TICKS
+    panel.grid = element_blank() # REMOVED ALL GRID LINES
+  ) +
+  expand_limits(x = 6000) 
+
+```
+
+## Question 2: Does the allocation favor the Biden administration?
+
+```{r}
+
+# Calculate the group means and median
+
+summary<- final |>
+  group_by(Winner) |>
+  summarize(
+    Mean_Per_Capita = mean(Funding_Per_Capita, na.rm = TRUE),
+    Median_Per_Capita = median(Funding_Per_Capita, na.rm = TRUE)
+  )
+
+
+ggplot(final, aes(x = Winner, y = Funding_Per_Capita, fill = Winner)) +
+  geom_boxplot()+
+  geom_point(
+    data = summary, 
+    aes(x = Winner, y = Mean_Per_Capita), 
+    shape = 23, size = 4, fill = "white"
+  ) +
+geom_text(
+    data = filter(final, Funding_Per_Capita > 2000), 
+    aes(label = State), 
+    nudge_x = 0.08,  # nudges text to the right of the dot
+    hjust = 0,       # left aligns text
+    size = 3.5
+  ) +
+  annotate(
+    "text", x = 2.3, y = 3500, 
+    label = "low population states pulling Trump's mean funding up", # short explanation
+    hjust = 1, fontface = "bold", color = "black", size = 3
+  ) +
+  #white diamond to point out mean
+  geom_point(data = summary, aes(x = Winner, y = Mean_Per_Capita), shape = 23, size = 4, fill = "white") +
+  geom_text(data = summary, aes(x = Winner, y = Mean_Per_Capita, label = paste("Mean:\n", dollar(Mean_Per_Capita, accuracy = 1))), vjust = -0.8, fontface = "bold", size = 4) +
+  
+  scale_fill_manual(values = c("Biden" = "blue", "Trump" = "red")) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(
+    title = "State Per Capita Funding by 2020 Election Winner",
+    subtitle = "Trump states have a higher median ($663 vs $547) and a much higher mean ($1,155 vs $674).",
+    x = NULL, 
+    y = "Funding Per Capita ($)"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "none", 
+    axis.text.x = element_text(size = 12, face = "bold")
+  )
+
+```
+
+## Conclusion
+
+**Is the allocation equitable based on population?**
+
+No, the allocation is highly inequitable on a per-capita basis. While total funding scales with population size, calculating the funding per resident shows massive disparities. The extremes reveals this: Alaska receives roughly \$5,045 per resident, while densely populated states like Florida and California receive under \$500 per resident. The allocation benefits low density, rural states, which is standard for federal highway and infrastructure formulas that account for geographic size alongside population.
+
+**Does the allocation favor the political interests of the Biden administration?**
+
+No, the data shows the allocation does not favor the Biden administration's political interests. In fact, the distribution favors states that voted for Donald Trump in 2020. The average per capita funding for Trump won states is \$1,155, nearly double the \$674 average for Biden-won states. Also, the upper quartile and maximum outliers of the data are dominated by Trump won states. Because the infrastructure allocation formula benefits large, low population states, conservative leaning rural states receive a higher financial benefit per resident than liberal leaning coastal states.
