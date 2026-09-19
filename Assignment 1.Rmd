@@ -70,15 +70,21 @@ final<- statefund %>%
 
 ```{r}
 # CHART 1: Total Funding vs Population
+
+highlight_states <- c("CALIFORNIA", "TEXAS", "NEW YORK", "FLORIDA", "WYOMING")
+
 ggplot(final, aes(x = Population, y = Total_Billions)) +
-  geom_point(alpha = 0.6, size = 3, color = "red") +
+  geom_point(data = filter(final, !State %in% highlight_states), 
+             color = "gray", size = 2.5, alpha = 0.6) +
+  geom_point(data = filter(final, State %in% highlight_states), 
+             color = "red", size = 3)+
   geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
   geom_text(
     data = filter(final, State %in% c("CALIFORNIA", "TEXAS", "NEW YORK", "FLORIDA", "WYOMING")),
     aes(label = State), 
     vjust = -1, # Pushes text above  dot
     fontface = "bold", 
-    size = 2.5
+    size = 2.7
   ) +
   annotate(
     "text", x = 14000000, y = 13, 
@@ -89,12 +95,12 @@ ggplot(final, aes(x = Population, y = Total_Billions)) +
   labs(
     title = "Baseline: Total Funding Matches Population",
     subtitle = "On an absolute basis, larger states get more money. But this hides the true story.",
-    x = "State Population", 
+    x = "State Population (Millions)", 
     y = "Total Funding (Billions)"
   ) +
+  theme_minimal()+
   theme(
-    plot.title = element_text(face = "bold", size = 14),
-    panel.grid.minor = element_blank()
+    plot.title = element_text(face = "bold", size = 14)
   )
 ```
 
@@ -129,6 +135,7 @@ ggplot(q1, aes(x = Funding_Per_Capita, y = State, fill = Winner)) +
     y = NULL,
     fill = "2020 Presidential Candidate"
   ) +
+  theme_minimal()
   theme(
     plot.title = element_text(face = "bold", size = 14),
     strip.text = element_text(face = "bold", size = 12),
@@ -167,13 +174,14 @@ geom_text(
     data = filter(final, Funding_Per_Capita > 2000), 
     aes(label = State), 
     nudge_x = 0.08,  # nudges text to the right of the dot
-    hjust = 0,       # left aligns text
+    hjust = 0,# left aligns text
+    fontface = "bold",
     size = 3.5
   ) +
   annotate(
-    "text", x = 2.3, y = 3500, 
+    "text", x = 1.9, y = 3500, 
     label = "low population states pulling Trump's mean funding up", # short explanation
-    hjust = 1, fontface = "bold", color = "black", size = 3
+    hjust = 1, fontface = "bold", color = "black", size = 4
   ) +
   #white diamond to point out mean
   geom_point(data = summary, aes(x = Winner, y = Mean_Per_Capita), shape = 23, size = 4, fill = "white") +
@@ -182,17 +190,17 @@ geom_text(
   scale_fill_manual(values = c("Biden" = "blue", "Trump" = "red")) +
   scale_y_continuous(labels = dollar_format()) +
   labs(
-    title = "State Per Capita Funding by 2020 Election Winner",
+    title = "State Per Capita Funding by 2020 Election Candidates",
     subtitle = "Trump states have a higher median ($663 vs $547) and a much higher mean ($1,155 vs $674).",
     x = NULL, 
     y = "Funding Per Capita ($)"
   ) +
+  theme_minimal()+
   theme(
     plot.title = element_text(face = "bold", size = 14),
     legend.position = "none", 
-    axis.text.x = element_text(size = 12, face = "bold")
-  )
-
+    axis.text.x = element_text(size = 14, face = "bold"))
+  
 ```
 
 ## Conclusion
