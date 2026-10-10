@@ -1,0 +1,208 @@
+---
+title: "Story 3: Firearm Mortality and Gun Control Laws"
+author: "Mei Qi Ng"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Approach & Methodology
+
+In this assignment, I will be answer the critical public health question: "**Do stricter firearm control laws help reduce firearm mortality?**" The goal is to determine if firearm control laws correlate with reduced firearm mortality across U.S. states.
+
+**Story Development Focus:** I am starting the data with categorical overview of the United States to define the 5 groups based on the strictness of their firearm laws and then narrowing it down into a micro level correlation of individual states to verify the data's integrity and analyzing relation between if stricter laws correspond to lower mortality. Finally, reveal these findings geographically to show how regional legislative cultures impact public health in real life by state. I will be focusing on saliency with the result data as it directly informs public safety policy.
+
+### **Deliverables:**
+
+1.  **Data Ingestion & Tidying:** Data integrates 2 primary sources:
+
+    ::: {}
+    - **CDC Firearm Mortality Statistics:** Extracted dynamically from the CDC's Vital Statistics API using `httr2`.
+
+    - **Everytown Gun Law Strength Scores:** Ingested via standardized CSV data, scoring state legislative environments on a 100-point scale.
+    :::
+
+    Using `dplyr` and `tidyr`, the data is cleaned, joined, and categorized into a 5-point Likert scale (1 = Most Lax, 5 = Strictest) based on equal quintile distributions (`ntile(5)`).
+
+2.  **Summary Comparison (Graph 1):** A bar chart is utilized to compare the average mortality rates across the 5 Likert categories.
+
+3.  **Correlation Analysis (Graph 2):** A scatter plot with a linear trend line was chosen to evaluate the relationship between state level mortality and law strictness.
+
+4.  **Spatial Heat Maps (Graphs 3 & 4):** Two Side by side geographical maps was used to confirm regional trends.
+
+Note: *For accessibility, the viridis color palette family package is used to ensure maximum readability for colorblind audience. State legislative strictness reflects active 2026 policy data, while the CDC API provides the latest annualized age-adjusted mortality estimates (2024/2025). This time lag is standard in public health data analysis due to the verification window required for state medical examiner records.*
+
+# Data Pipeline: load, tidy and merge
+
+```{r}
+# Load packages and tidy Gun law CSV
+library(tidyverse)
+library(httr2)
+library(usmap)
+library(viridis)
+
+gun_law <-read.csv("https://raw.githubusercontent.com/meiqing39/DATA-608/refs/heads/main/Story%203/Everytown-gun-laws-save-lives.csv")
+
+# 1A Tidy and Create  5-point Likert scale for Gun Control Laws
+# 1 = Most Lax, 2 = Lax, 3 = Moderate, 4 = Strict, 5 = Strictest
+
+gun_laws <- gun_law|>
+  rename(gunlaw_strength = Strength.of.Gun.Laws..out.of.100.points.,
+         state = Label) |> 
+  mutate(state = state.name[match(str_trim(state), state.abb)]) |> # convert state to full state name to match cdc csv
+  select(state, gunlaw_strength) |>
+  mutate(Likert_Score = ntile(gunlaw_strength, 5), #split states to 5 equal bins base on score
+    Likert_Category = factor(Likert_Score, 
+                             levels = 1:5, 
+                             labels = c("Most Lax", "Lax", "Moderate", "Strict", "Strictest"))
+  )
+
+
+# 1B. Request and Tidy CDC firearm mortality 
+
+cdc_req <- request("https://data.cdc.gov/resource/489q-934x.json") |> 
+  req_url_query(`$limit` = 5000)
+
+# Perform request then parse JSON into a dataframe
+
+cdc_resp <- req_perform(cdc_req)
+
+cdc_api <- resp_body_json(cdc_resp, simplifyVector = TRUE) |> as_tibble()
+
+
+cdc_clean <- cdc_api|> 
+  filter(cause_of_death == "Firearm-related injury", 
+         rate_type == "Age-adjusted",
+         time_period == "12 months ending with quarter") |> 
+  pivot_longer(cols = starts_with("rate_"), names_to = "raw_col", values_to = "Mortality_Rate") |> #pivot all state name column with rate_
+  mutate(
+    Mortality_Rate = suppressWarnings(as.numeric(Mortality_Rate)),
+    name = str_remove(raw_col, "rate_"),
+    name = str_replace_all(name, "_", " "),
+    state = str_to_title(name) #capitalize beginning letter
+  ) |> 
+  filter(state %in% state.name) |> 
+  drop_na(Mortality_Rate) |> 
+  arrange(desc(year_and_quarter)) |> 
+  group_by(state) |> 
+  slice(1) |> 
+  ungroup() |> 
+  select(state, Mortality_Rate)
+
+
+# 1c. Merge datasets
+combo <- gun_laws |> 
+  left_join(cdc_clean, by = "state")
+
+head(combo)
+```
+
+# Categorical Analysis: Macro View
+
+To understand if gun legislation impacts public health, I aggregated the states into 5 Likert tier/categories based on their Everytown gun law strength scores, ranging from "Most Lax" to "Strictest." By calculating the average CDC mortality rate for each category, a clear macro level trend emerges from the data.
+
+```{r graph-1-bar, fig.width=9, fig.height=5}
+stats <- combo |>   #collect mean by Likert bin
+  summarize(.by = Likert_Category, 
+            Avg_Mortality = mean(Mortality_Rate, na.rm = TRUE),
+            State_Count = n()) |> 
+  arrange(Likert_Category)
+
+# Graph 1:  Bar Chart
+ggplot(stats, aes(x = Likert_Category, y = Avg_Mortality, fill = Likert_Category)) +
+  geom_col(color = "black", width = 0.65, alpha = 0.9) +
+  geom_text(aes(label = round(Avg_Mortality, 1)), vjust = -0.6, fontface = "bold", size = 4.5) +
+  scale_fill_viridis_d(option = "mako", direction = -1) + 
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(title = "Average Firearm Mortality Rate by Gun Law Strictness",
+       subtitle = "Mortality declines as legislative strictness increases",
+       x = "Gun Law Strictness (Likert Scale)",
+       y = "Deaths per 100,000 Persons") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(face = "bold", size = 14))
+```
+
+The bar chart shows a obvious inverse relationship. States categorized as having the "Most Lax" laws suffer an average mortality rate that is much higher than states in the "Strictest" category.
+
+# Correlation Analysis: Micro View
+
+Aggregated averages sometimes hides outlier/variances. To look into this, I decided to plot all 50 states individually to check if this downward trend is consistent.
+
+Graph Choice: I selected a Scatter Plot with a Linear Regression Line to demonstrate th relationship between the two numerical variables (law strength and mortality rate). A scatter plot ensures transparency and shows the distribution of every state. The regression line confirms the direction and strength of the correlation, while the visual spread proves there is no major outliers (no state possesses both max law strictness and max mortality).
+
+```{r graph-2-scatter, fig.width=9, fig.height=5}
+# Graph 2: Scatter Plot with Regression Trend
+ggplot(combo, aes(x = gunlaw_strength, y = Mortality_Rate)) +
+  geom_point(aes(color = Likert_Category), size = 3.5, alpha = 0.85) +
+  geom_smooth(method = "lm", color = "black", linetype = "dashed", se = TRUE, alpha = 0.15) +
+  scale_color_viridis_d(option = "mako", direction = -1) +
+  labs(title = "State Law Strength Score vs. Firearm Mortality",
+       subtitle = "Negative correlation confirms policy strength tracks lower death rates",
+       x = "Gun Law Strength Score (0 to 100)",
+       y = "Firearm Mortality Rate (per 100k)",
+       color = "Likert Tier") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        plot.title = element_text(face = "bold", size = 14))
+```
+
+This model shows the visible negative correlation (strong negative slope); as a state's gun law strenght score increases, the corresponding mortality rate on the y axis drops. High mortality rates are concentrated among states with law strength scores under 20.
+
+# Spatial Heat Map: Geographic View
+
+Public heath and policies are related and tied to the location. By looking at where these policies are implemented and where the death is occurring, we can further explore how firearm mortality vary by state.
+
+Graph Choice: I selected a side by side Spatial Heat Maps because the region's location also explains the culture and legislation in the US. Maps changes statistics into a format that reveals . By placing the legislative map next to the mortality map and using accessible viridis color palettes, it will allow the audience to visually trace how blocks of legislation translate into blocks of safety or risk.
+
+```{r graph-3-and-4-maps, fig.width=10, fig.height=5.5}
+# Graph 3: Legislative Strictness Map
+map_laws <- plot_usmap(data = combo, values = "Likert_Score", regions = "states") +
+  scale_fill_viridis_c(option = "viridis", 
+                       breaks = 1:5,
+                       labels = c("1 (Lax)", "2", "3", "4", "5 (Strict)"),
+                       name = "Strictness Tier") +
+  labs(title = "State Gun Legislation Strictness",
+       subtitle = "Assigned via 5-Point Likert Scale (Quintiles)") +
+  theme(legend.position = "right", 
+        plot.title = element_text(face = "bold", size = 13))
+
+# Graph 4: Mortality Heat Map
+map_mortality <- plot_usmap(data = combo, values = "Mortality_Rate", regions = "states") +
+  scale_fill_viridis_c(option = "inferno", 
+                       direction = -1, 
+                       name = "Deaths / 100k") +
+  labs(title = "CDC Firearm Mortality Rates",
+       subtitle = "Age-Adjusted Annualized Rate per 100,000 Persons") +
+  theme(legend.position = "right", 
+        plot.title = element_text(face = "bold", size = 13))
+
+# Final output
+map_laws
+map_mortality
+```
+
+Spatial patterns function as visual counterparts: \* High legislative strictness scores in the West Coast (CA, OR, WA) and the Northeast (NY, NJ, MA) corresponds to the lowest firearm mortality rates
+
+- low scored legal states are clustered through the South (MS, LA, AL) and Mountain West (WY, MT), matches the highest mortality rates in the country.
+
+# Findings 
+
+Analyzing the CDC mortality records with the state gun policy pointed to a definite answer to the assignment question: **Yes, stricter firearm control laws are strongly associated with reduced firearm mortality.**
+
+The core findings stayed consistent across all 3 analytical perspectives:
+
+1.  **Categorical:** States in the strictest Likert group average about 1/3 the firearm mortality of states in the most lax group.
+2.  **Correlation:** A negative linear trend holds across individual states without major high-law/high-mortality anomalies.
+3.  **Geography:** Spatial clusters of most legislation align directly with elevated mortality rates across the South and Mountain West.
+
+These results indicate that state-level firearm legislation serves as a important and measurable protective factor against firearm mortality.
